@@ -9,6 +9,7 @@ from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 from tqdm import tqdm
 import pandas as pd
+from sklearn.metrics import auc
 from helper import load_json
 
 
@@ -37,6 +38,44 @@ def compute_overlap(a, b):
     intersection = iw * ih
 
     return intersection / ua
+
+def compute_iou(box1, box2):
+    """
+    Computes the Intersection over Union (IoU) between two bounding boxes.
+
+    Args:
+        box1: List or array [x_min, y_min, x_max, y_max] for the first box.
+        box2: List or array [x_min, y_min, x_max, y_max] for the second box.
+
+    Returns:
+        iou: IoU value between 0 and 1.
+    """
+    # Calculate intersection coordinates
+    x_min_inter = max(box1[0], box2[0])
+    y_min_inter = max(box1[1], box2[1])
+    x_max_inter = min(box1[2], box2[2])
+    y_max_inter = min(box1[3], box2[3])
+
+    # Calculate intersection area
+    inter_width = max(0, x_max_inter - x_min_inter)
+    inter_height = max(0, y_max_inter - y_min_inter)
+    intersection_area = inter_width * inter_height
+
+    # Calculate areas of the individual boxes
+    box1_area = (box1[2] - box1[0]) * (box1[3] - box1[1])
+    box2_area = (box2[2] - box2[0]) * (box2[3] - box2[1])
+
+    # Calculate union area
+    union_area = box1_area + box2_area - intersection_area
+
+    # Avoid division by zero
+    if union_area == 0:
+        return 0.0
+
+    # Compute IoU
+    iou = intersection_area / union_area
+    return iou
+
 
 
 def _compute_ap(recall, precision):
@@ -294,39 +333,43 @@ def evaluate_coco_metrics(generator, retinanet, buv_json_file, model_path, score
         ground_truth.append(annotation)
 
     # Prepare COCO-style predictions
-    print('Preparing predictions...')
-    predictions = []
-    retinanet.eval()
-    with torch.no_grad():
-        for i in tqdm(range(len(generator))):
-            data = generator[i]
-            relative_path = os.path.relpath(generator.image_names[i], start='rawframes')
-            file_name = '/'.join(relative_path.split('\\')[-3:])
-            image_id = images_df[images_df['file_name'] == file_name]['id'].values[0]
-            detection = process_image(data, retinanet, score_threshold, max_detections)
-            if len(detection) == 0:
-                print('Empty Detection: ', detection)
-                det = [0, 0, 0, 0, 0, 0]
-            else:
-                det = detection[0]
+    bbox_output_file = f'{model_path}_bbox_results.json'
+    if os.path.exists(bbox_output_file):
+        print(f'Loading existing predictions from {bbox_output_file}...')
+        with open(bbox_output_file, 'r') as f:
+            predictions = json.load(f)
+    else:
+        print('Preparing predictions...')
+        predictions = []
+        retinanet.eval()
+        with torch.no_grad():
+            for i in tqdm(range(len(generator))):
+                data = generator[i]
+                relative_path = os.path.relpath(generator.image_names[i], start='rawframes')
+                file_name = '/'.join(relative_path.split('\\')[-3:])
+                image_id = images_df[images_df['file_name'] == file_name]['id'].values[0]
+                detection = process_image(data, retinanet, score_threshold, max_detections)
+                if len(detection) == 0:
+                    print('Empty Detection: ', detection)
+                    det = [0, 0, 0, 0, 0, 0]
+                else:
+                    det = detection[0]
 
-            predictions.append({
-                "image_id": int(image_id),
-                "bbox": [float(det[0]), float(det[1]), float(det[2]), float(det[3])], # [x_min, y_min, x_max, y_max]
-                "score": float(det[4]),
-                "category_id": int(det[5])
-            })
+                predictions.append({
+                    "image_id": int(image_id),
+                    "bbox": [float(det[0]), float(det[1]), float(det[2]), float(det[3])], # [x_min, y_min, x_max, y_max]
+                    "score": float(det[4]),
+                    "category_id": int(det[5])
+                })
+
+        try:
+            with open(bbox_output_file, 'w') as f:
+                json.dump(predictions, f, indent=4)
+        except Exception as e:
+            print(f'Error writing to {bbox_output_file}: {e}')
 
     # Load ground truth and predictions into COCO and COCOeval
     coco_gt = COCO()
-    bbox_output_file = f'{model_path}_bbox_results.json'
-
-    try:
-        with open(bbox_output_file, 'w') as f:
-            json.dump(predictions, f, indent=4)
-    except Exception as e:
-        print(f'Error writing to {bbox_output_file}: {e}')
-
     coco_gt.dataset = {
         "images": dict_image_data,
         "categories": [{"id": i, "name": generator.label_to_name(i)} for i in range(generator.num_classes())],
@@ -359,3 +402,124 @@ def evaluate_coco_metrics(generator, retinanet, buv_json_file, model_path, score
 
     return metrics
 
+def evaluate_froc(generator, retinanet, buv_json_file, model_path, score_thresholds, max_detections=1):
+    """
+    Evaluate FROC metrics.
+    """
+
+    # Prepare COCO-style ground truth annotations
+    ground_truth = []
+    json_dict = load_json(buv_json_file)
+    dict_keys = list(json_dict.keys())
+    dict_image_data = json_dict[dict_keys[2]]
+    dict_annotation_data = json_dict[dict_keys[3]]
+    images_df = pd.DataFrame(dict_image_data)
+    annotation_df = pd.DataFrame(dict_annotation_data)
+    num_images = len(generator)
+    print('Preparing ground truth annotations...')
+    for i in tqdm(range(num_images)):
+        relative_path = os.path.relpath(generator.image_names[i], start='rawframes')
+        file_name = '/'.join(relative_path.split('\\')[-3:])
+        image_id = images_df[images_df['file_name'] == file_name]['id'].values[0]
+        annotations = annotation_df[annotation_df['image_id'] == image_id].to_dict(orient='records')
+        for annotation in annotations:
+            annotation['category_id'] = 0
+            bbox = generator.load_annotations(i)[0][:4]
+            annotation['bbox'] = [float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])]  # [x_min, y_min, x_max, y_max]
+            ground_truth.append(annotation)
+
+    # Prepare predictions
+    bbox_output_file = f'{model_path}_bbox_results.json'
+    if os.path.exists(bbox_output_file):
+        print(f'Loading existing predictions from {bbox_output_file}...')
+        with open(bbox_output_file, 'r') as f:
+            predictions = json.load(f)
+    else:
+        print('Preparing predictions...')
+        predictions = []
+        retinanet.eval()
+        with torch.no_grad():
+            for i in tqdm(range(num_images)):
+                data = generator[i]
+                relative_path = os.path.relpath(generator.image_names[i], start='rawframes')
+                file_name = '/'.join(relative_path.split('\\')[-3:])
+                image_id = images_df[images_df['file_name'] == file_name]['id'].values[0]
+                detection = process_image(data, retinanet, score_threshold=0.0, max_detections=max_detections)  # No score threshold yet
+                for det in detection:
+                    predictions.append({
+                        "image_id": int(image_id),
+                        "bbox": [float(det[0]), float(det[1]), float(det[2]), float(det[3])],  # [x_min, y_min, x_max, y_max]
+                        "score": float(det[4]),
+                        "category_id": int(det[5])
+                    })
+
+        try:
+            with open(bbox_output_file, 'w') as f:
+                json.dump(predictions, f, indent=4)
+        except Exception as e:
+            print(f'Error writing to {bbox_output_file}: {e}')
+
+    # FROC Calculation
+    print('Calculating FROC...')
+    iou_thresholds = [0.5, 0.75]
+    froc_results = {}
+
+    for iou_threshold in iou_thresholds:
+        tprs = []
+        fppis = []
+        num_ground_truth = len(ground_truth)
+
+        for threshold in score_thresholds:
+            # Filter predictions based on the threshold
+            filtered_predictions = [pred for pred in predictions if pred['score'] >= threshold]
+
+            # Count true positives and false positives
+            true_positives = 0
+            false_positives = 0
+            used_gt_ids = set()
+
+            for pred in filtered_predictions:
+                pred_bbox = pred['bbox']
+                matched = False
+                for gt in ground_truth:
+                    if gt['image_id'] == pred['image_id'] and gt['id'] not in used_gt_ids:
+                        iou = compute_iou(pred_bbox, gt['bbox'])
+                        if iou >= iou_threshold:  # IoU threshold for TP
+                            true_positives += 1
+                            used_gt_ids.add(gt['id'])
+                            matched = True
+                            break
+                if not matched:
+                    false_positives += 1
+
+            # Calculate TPR and FPPI
+            tpr = true_positives / num_ground_truth if num_ground_truth > 0 else 0
+            fppi = false_positives / num_images if num_images > 0 else 0
+
+            tprs.append(tpr)
+            fppis.append(fppi)
+
+        froc_results[iou_threshold] = (fppis, tprs)
+
+    # Plot FROC curve
+    plt.figure(figsize=(10, 6))
+    for iou_threshold, (fppis, tprs) in froc_results.items():
+        plt.plot(fppis, tprs, marker='o', label=f'IoU={iou_threshold}')
+
+        ## Annotate score thresholds
+        #for i, threshold in enumerate(score_thresholds):
+        #    plt.text(fppis[i], tprs[i], f"{threshold:.2f}", fontsize=8, ha='left', va='bottom')
+
+    plt.xlabel('False Positives Per Image (FPPI)')
+    plt.ylabel('True Positive Rate (TPR)')
+    plt.title('FROC Curve')
+    plt.legend()
+    plt.grid()
+    plt.show()
+
+    # Compute AUC of FROC for each IoU threshold
+    froc_aucs = {iou_threshold: auc(fppis, tprs) for iou_threshold, (fppis, tprs) in froc_results.items()}
+    for iou_threshold, froc_auc in froc_aucs.items():
+        print(f"FROC AUC (IoU={iou_threshold}): {froc_auc:.4f}")
+
+    return froc_aucs
