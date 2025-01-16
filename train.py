@@ -41,9 +41,9 @@ def main(args=None):
         if parser.coco_path is None:
             raise ValueError('Must provide --coco_path when training on COCO,')
 
-        dataset_train = CocoDataset(parser.coco_path, set_name='train2017',
-                                    transform=transforms.Compose([Normalizer(), Augmenter(), Resizer()]))
-        dataset_val = CocoDataset(parser.coco_path, set_name='val2017',
+        dataset_train = CocoDataset(parser.coco_path, set_name='imagenet_vid_train_15frames',
+                                    transform=transforms.Compose([Normalizer(), Augmenter(), Resizer()]), only_train_frames=True)
+        dataset_val = CocoDataset(parser.coco_path, set_name='imagenet_vid_val',
                                   transform=transforms.Compose([Normalizer(), Resizer()]))
 
     elif parser.dataset == 'csv':
@@ -161,11 +161,12 @@ def main(args=None):
                     print(e)
                     continue
 
+            save_model_path = '{}_retinanet_{}.pt'.format(parser.dataset, epoch_num)
             if parser.dataset == 'coco':
 
                 print('Evaluating dataset')
 
-                coco_eval.evaluate_coco(dataset_val, retinanet)
+                coco_eval.evaluate_coco(dataset_val, retinanet, model_path=save_model_path)
 
             elif parser.dataset == 'csv' and parser.csv_val is not None:
 
@@ -175,7 +176,7 @@ def main(args=None):
 
             scheduler.step(np.mean(epoch_loss))
 
-            torch.save(retinanet.module, '{}_retinanet_{}.pt'.format(parser.dataset, epoch_num))
+            torch.save(retinanet.module, save_model_path)
 
     except KeyboardInterrupt:
         print('Training interrupted. Saving model...')

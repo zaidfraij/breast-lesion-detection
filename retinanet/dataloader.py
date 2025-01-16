@@ -5,6 +5,8 @@ import torch
 import numpy as np
 import random
 import csv
+import json
+import pandas as pd
 
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, utils
@@ -23,11 +25,16 @@ from future.utils import raise_from
 from tqdm import tqdm
 
 
+def load_json(json_file_path):
+    # open and load the JSON file
+    with open(json_file_path, 'r') as file:
+        data = json.load(file)
+    return data
 
 class CocoDataset(Dataset):
     """Coco dataset."""
 
-    def __init__(self, root_dir, set_name='train2017', transform=None):
+    def __init__(self, root_dir, set_name='train2017', transform=None, only_train_frames=False):
         """
         Args:
             root_dir (string): COCO directory.
@@ -38,8 +45,20 @@ class CocoDataset(Dataset):
         self.set_name = set_name
         self.transform = transform
 
-        self.coco      = COCO(os.path.join(self.root_dir, 'annotations', 'instances_' + self.set_name + '.json'))
-        self.image_ids = self.coco.getImgIds()
+        set_json_path = os.path.join(self.root_dir, 'annotations', 'instances_' + self.set_name + '.json')
+        self.coco      = COCO(set_json_path)
+
+        if only_train_frames:
+            json_dict = load_json(set_json_path)
+            dict_keys = list(json_dict.keys())
+            dict_image_data = json_dict[dict_keys[2]]
+
+            images_df = pd.DataFrame(dict_image_data)
+            images_df = images_df[images_df['is_vid_train_frame'] == True]
+            self.image_ids = list(images_df.id)
+        else:
+            self.image_ids = self.coco.getImgIds()
+
 
         self.load_classes()
 
@@ -76,7 +95,8 @@ class CocoDataset(Dataset):
 
     def load_image(self, image_index):
         image_info = self.coco.loadImgs(self.image_ids[image_index])[0]
-        path       = os.path.join(self.root_dir, 'images', self.set_name, image_info['file_name'])
+        #path       = os.path.join(self.root_dir, 'images', self.set_name, image_info['file_name'])
+        path       = os.path.join(self.root_dir, 'rawframes', image_info['file_name'])
         img = skimage.io.imread(path)
 
         if len(img.shape) == 2:
