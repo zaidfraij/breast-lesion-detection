@@ -100,16 +100,15 @@ class BBoxTransform(nn.Module):
             self.std = std
 
     def forward(self, boxes, deltas):
-        print(boxes.shape)
         widths  = boxes[:, :, 2] - boxes[:, :, 0]
         heights = boxes[:, :, 3] - boxes[:, :, 1]
         ctr_x   = boxes[:, :, 0] + 0.5 * widths
         ctr_y   = boxes[:, :, 1] + 0.5 * heights
 
-        dx = deltas[:, :, 0] * self.std[0] + self.mean[0]
-        dy = deltas[:, :, 1] * self.std[1] + self.mean[1]
-        dw = deltas[:, :, 2] * self.std[2] + self.mean[2]
-        dh = deltas[:, :, 3] * self.std[3] + self.mean[3]
+        dx = deltas[:, 0, :, 0] * self.std[0] + self.mean[0]
+        dy = deltas[:, 0, :, 1] * self.std[1] + self.mean[1]
+        dw = deltas[:, 0, :, 2] * self.std[2] + self.mean[2]
+        dh = deltas[:, 0, :, 3] * self.std[3] + self.mean[3]
 
         pred_ctr_x = ctr_x + dx * widths
         pred_ctr_y = ctr_y + dy * heights
