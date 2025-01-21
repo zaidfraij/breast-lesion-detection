@@ -296,58 +296,256 @@ class ResNet(nn.Module):
 
             return [finalScores, finalAnchorBoxesIndexes, finalAnchorBoxesCoordinates]
 
+class TemporalAttention(nn.Module):
+    def __init__(self, d_model, num_heads):
+        super(TemporalAttention, self).__init__()
+        self.attention = nn.MultiheadAttention(embed_dim=d_model, num_heads=num_heads, batch_first=True)
+
+    def forward(self, x):
+        # Input shape: [B, T, C, H, W]
+        B, T, C, H, W = x.shape
+        x = x.view(B, T, C, -1)  # Flatten spatial dimensions: [B, T, C, N]
+        x = x.permute(0, 3, 1, 2)  # [B, N, T, C]
+        N = x.shape[1]
+
+        # Apply attention for each spatial location (N)
+        x = x.reshape(B * N, T, C)  # [B * N, T, C]
+        attended, _ = self.attention(x, x, x)  # Temporal attention
+        attended = attended.view(B, N, T, C).permute(0, 2, 3, 1)  # [B, T, C, N]
+
+        # Reshape back to [B, T, C, H, W]
+        attended = attended.view(B, T, C, H, W)
+        return attended
+
+class ResNetWithTemporalAttention(nn.Module):
+
+    def __init__(self, num_classes, block, layers, num_heads=4):
+        super(ResNetWithTemporalAttention, self).__init__()
+        self.inplanes = 64
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.relu = nn.ReLU(inplace=True)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.layer1 = self._make_layer(block, 64, layers[0])
+        self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
+
+        # Temporal attention for each feature level
+        self.temporal_attention_C3 = TemporalAttention(d_model=512, num_heads=num_heads)
+        self.temporal_attention_C4 = TemporalAttention(d_model=1024, num_heads=num_heads)
+        self.temporal_attention_C5 = TemporalAttention(d_model=2048, num_heads=num_heads)
+
+        # Align features to 256 channels for FPN
+        self.feature_align_C3 = nn.Conv2d(512, 256, kernel_size=1, stride=1, bias=False)
+        self.feature_align_C4 = nn.Conv2d(1024, 256, kernel_size=1, stride=1, bias=False)
+        self.feature_align_C5 = nn.Conv2d(2048, 256, kernel_size=1, stride=1, bias=False)
+
+        # FPN
+        self.fpn = PyramidFeatures(256, 256, 256)
+
+        self.regressionModel = RegressionModel(256)
+        self.classificationModel = ClassificationModel(256, num_classes=num_classes)
+        self.anchors = Anchors()
+        self.regressBoxes = BBoxTransform()
+        self.clipBoxes = ClipBoxes()
+        self.focalLoss = losses.SequenceFocalLoss()
+
+    def _make_layer(self, block, planes, blocks, stride=1):
+        downsample = None
+        if stride != 1 or self.inplanes != planes * block.expansion:
+            downsample = nn.Sequential(
+                nn.Conv2d(self.inplanes, planes * block.expansion,
+                          kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(planes * block.expansion),
+            )
+
+        layers = [block(self.inplanes, planes, stride, downsample)]
+        self.inplanes = planes * block.expansion
+        for _ in range(1, blocks):
+            layers.append(block(self.inplanes, planes))
+
+        return nn.Sequential(*layers)
+
+    def freeze_bn(self):
+        '''Freeze BatchNorm layers.'''
+        for layer in self.modules():
+            if isinstance(layer, nn.BatchNorm2d):
+                layer.eval()
+                
+    def forward(self, inputs):
+        if self.training:
+            img_batch, annotations = inputs
+        else:
+            img_batch = inputs
+
+        B, T, C, H, W = img_batch.shape  # [B, T, C, H, W]
+        features = []
+
+        # Extract features for each frame
+        for t in range(T):
+            x = self.conv1(img_batch[:, t])
+            x = self.bn1(x)
+            x = self.relu(x)
+            x = self.maxpool(x)
+
+            x1 = self.layer1(x)
+            x2 = self.layer2(x1)
+            x3 = self.layer3(x2)
+            x4 = self.layer4(x3)
+
+            features.append([x2, x3, x4])
+
+        # Stack features along temporal dimension
+        features = [torch.stack([f[i] for f in features], dim=1) for i in range(3)]
+
+        # Apply temporal attention
+        features[0] = self.temporal_attention_C3(features[0])
+        features[1] = self.temporal_attention_C4(features[1])
+        features[2] = self.temporal_attention_C5(features[2])
+
+        # Align features to 256 channels for FPN
+        features[0] = self.feature_align_C3(features[0].flatten(0, 1)).view(B, T, 256, features[0].shape[3], features[0].shape[4])
+        features[1] = self.feature_align_C4(features[1].flatten(0, 1)).view(B, T, 256, features[1].shape[3], features[1].shape[4])
+        features[2] = self.feature_align_C5(features[2].flatten(0, 1)).view(B, T, 256, features[2].shape[3], features[2].shape[4])
+
+        # Pass features through FPN frame by frame
+        pyramid_features = [self.fpn([f[:, t] for f in features]) for t in range(T)]
+
+        # Collect classification and regression outputs
+        classification = torch.stack([torch.cat([self.classificationModel(feature) for feature in pyramid], dim=1) for pyramid in pyramid_features], dim=1)
+        regression = torch.stack([torch.cat([self.regressionModel(feature) for feature in pyramid], dim=1) for pyramid in pyramid_features], dim=1)
+
+        anchors = self.anchors(img_batch[:, 0])  # Anchors remain the same for all frames
+
+        if self.training:
+            return self.focalLoss(classification, regression, anchors, annotations)
+        else:
+            transformed_anchors = self.regressBoxes(anchors, regression)
+            transformed_anchors = self.clipBoxes(transformed_anchors, img_batch[:, 0])
+
+            finalResult = [[], [], []]
+
+            finalScores = torch.Tensor([])
+            finalAnchorBoxesIndexes = torch.Tensor([]).long()
+            finalAnchorBoxesCoordinates = torch.Tensor([])
+
+            if torch.cuda.is_available():
+                finalScores = finalScores.cuda()
+                finalAnchorBoxesIndexes = finalAnchorBoxesIndexes.cuda()
+                finalAnchorBoxesCoordinates = finalAnchorBoxesCoordinates.cuda()
+
+            for i in range(classification.shape[2]):
+                scores = torch.squeeze(classification[:, :, i])
+                scores_over_thresh = (scores > 0.05)
+                if scores_over_thresh.sum() == 0:
+                    continue
+
+                scores = scores[scores_over_thresh]
+                anchorBoxes = torch.squeeze(transformed_anchors)
+                anchorBoxes = anchorBoxes[scores_over_thresh]
+                anchors_nms_idx = nms(anchorBoxes, scores, 0.5)
+
+                finalResult[0].extend(scores[anchors_nms_idx])
+                finalResult[1].extend(torch.tensor([i] * anchors_nms_idx.shape[0]))
+                finalResult[2].extend(anchorBoxes[anchors_nms_idx])
+
+                finalScores = torch.cat((finalScores, scores[anchors_nms_idx]))
+                finalAnchorBoxesIndexesValue = torch.tensor([i] * anchors_nms_idx.shape[0])
+                if torch.cuda.is_available():
+                    finalAnchorBoxesIndexesValue = finalAnchorBoxesIndexesValue.cuda()
+
+                finalAnchorBoxesIndexes = torch.cat((finalAnchorBoxesIndexes, finalAnchorBoxesIndexesValue))
+                finalAnchorBoxesCoordinates = torch.cat((finalAnchorBoxesCoordinates, anchorBoxes[anchors_nms_idx]))
+
+            return [finalScores, finalAnchorBoxesIndexes, finalAnchorBoxesCoordinates]
 
 
-def resnet18(num_classes, pretrained=False, **kwargs):
-    """Constructs a ResNet-18 model.
+def resnet18(num_classes, pretrained=False, use_temporal=False, num_heads=4, **kwargs):
+    """Constructs a ResNet-18 model with optional temporal attention.
     Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
+        num_classes (int): Number of output classes.
+        pretrained (bool): If True, loads pre-trained weights from ImageNet.
+        use_temporal (bool): If True, uses the ResNetWithTemporalAttention class.
+        num_heads (int): Number of attention heads (if temporal attention is used).
     """
-    model = ResNet(num_classes, BasicBlock, [2, 2, 2, 2], **kwargs)
+    if use_temporal:
+        model = ResNetWithTemporalAttention(num_classes, BasicBlock, [2, 2, 2, 2], num_heads=num_heads, **kwargs)
+    else:
+        model = ResNet(num_classes, BasicBlock, [2, 2, 2, 2], **kwargs)
+
     if pretrained:
         model.load_state_dict(model_zoo.load_url(model_urls['resnet18'], model_dir='.'), strict=False)
     return model
 
 
-def resnet34(num_classes, pretrained=False, **kwargs):
-    """Constructs a ResNet-34 model.
+def resnet34(num_classes, pretrained=False, use_temporal=False, num_heads=4, **kwargs):
+    """Constructs a ResNet-34 model with optional temporal attention.
     Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
+        num_classes (int): Number of output classes.
+        pretrained (bool): If True, loads pre-trained weights from ImageNet.
+        use_temporal (bool): If True, uses the ResNetWithTemporalAttention class.
+        num_heads (int): Number of attention heads (if temporal attention is used).
     """
-    model = ResNet(num_classes, BasicBlock, [3, 4, 6, 3], **kwargs)
+    if use_temporal:
+        model = ResNetWithTemporalAttention(num_classes, BasicBlock, [3, 4, 6, 3], num_heads=num_heads, **kwargs)
+    else:
+        model = ResNet(num_classes, BasicBlock, [3, 4, 6, 3], **kwargs)
+
     if pretrained:
         model.load_state_dict(model_zoo.load_url(model_urls['resnet34'], model_dir='.'), strict=False)
     return model
 
 
-def resnet50(num_classes, pretrained=False, **kwargs):
-    """Constructs a ResNet-50 model.
+def resnet50(num_classes, pretrained=False, use_temporal=True, num_heads=4, **kwargs):
+    """Constructs a ResNet-50 model with optional temporal attention.
     Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
+        num_classes (int): Number of output classes.
+        pretrained (bool): If True, loads pre-trained weights from ImageNet.
+        use_temporal (bool): If True, uses the ResNetWithTemporalAttention class.
+        num_heads (int): Number of attention heads (if temporal attention is used).
     """
-    model = ResNet(num_classes, Bottleneck, [3, 4, 6, 3], **kwargs)
+    if use_temporal:
+        model = ResNetWithTemporalAttention(num_classes, Bottleneck, [3, 4, 6, 3], num_heads=num_heads, **kwargs)
+    else:
+        model = ResNet(num_classes, Bottleneck, [3, 4, 6, 3], **kwargs)
+
     if pretrained:
         model.load_state_dict(model_zoo.load_url(model_urls['resnet50'], model_dir='.'), strict=False)
     return model
 
 
-def resnet101(num_classes, pretrained=False, **kwargs):
-    """Constructs a ResNet-101 model.
+def resnet101(num_classes, pretrained=False, use_temporal=False, num_heads=4, **kwargs):
+    """Constructs a ResNet-101 model with optional temporal attention.
     Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
+        num_classes (int): Number of output classes.
+        pretrained (bool): If True, loads pre-trained weights from ImageNet.
+        use_temporal (bool): If True, uses the ResNetWithTemporalAttention class.
+        num_heads (int): Number of attention heads (if temporal attention is used).
     """
-    model = ResNet(num_classes, Bottleneck, [3, 4, 23, 3], **kwargs)
+    if use_temporal:
+        model = ResNetWithTemporalAttention(num_classes, Bottleneck, [3, 4, 23, 3], num_heads=num_heads, **kwargs)
+    else:
+        model = ResNet(num_classes, Bottleneck, [3, 4, 23, 3], **kwargs)
+
     if pretrained:
         model.load_state_dict(model_zoo.load_url(model_urls['resnet101'], model_dir='.'), strict=False)
     return model
 
 
-def resnet152(num_classes, pretrained=False, **kwargs):
-    """Constructs a ResNet-152 model.
+def resnet152(num_classes, pretrained=False, use_temporal=False, num_heads=4, **kwargs):
+    """Constructs a ResNet-152 model with optional temporal attention.
     Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
+        num_classes (int): Number of output classes.
+        pretrained (bool): If True, loads pre-trained weights from ImageNet.
+        use_temporal (bool): If True, uses the ResNetWithTemporalAttention class.
+        num_heads (int): Number of attention heads (if temporal attention is used).
     """
-    model = ResNet(num_classes, Bottleneck, [3, 8, 36, 3], **kwargs)
+    if use_temporal:
+        model = ResNetWithTemporalAttention(num_classes, Bottleneck, [3, 8, 36, 3], num_heads=num_heads, **kwargs)
+    else:
+        model = ResNet(num_classes, Bottleneck, [3, 8, 36, 3], **kwargs)
+
     if pretrained:
         model.load_state_dict(model_zoo.load_url(model_urls['resnet152'], model_dir='.'), strict=False)
     return model

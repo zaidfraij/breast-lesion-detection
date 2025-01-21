@@ -3,23 +3,39 @@ import torch
 import torch.nn as nn
 
 def calc_iou(a, b):
-    area = (b[:, 2] - b[:, 0]) * (b[:, 3] - b[:, 1])
+    """
+    Calculate the IoU (Intersection over Union) between two sets of bounding boxes.
+    
+    Args:
+        a (Tensor): Tensor of shape [N, 4] containing N bounding boxes [x1, y1, x2, y2].
+        b (Tensor): Tensor of shape [M, 4] containing M bounding boxes [x1, y1, x2, y2].
 
-    iw = torch.min(torch.unsqueeze(a[:, 2], dim=1), b[:, 2]) - torch.max(torch.unsqueeze(a[:, 0], 1), b[:, 0])
-    ih = torch.min(torch.unsqueeze(a[:, 3], dim=1), b[:, 3]) - torch.max(torch.unsqueeze(a[:, 1], 1), b[:, 1])
+    Returns:
+        Tensor: IoU values of shape [N, M].
+    """
+    # Validate inputs
+    assert a.ndim == 2 and a.shape[1] == 4, f"Expected 'a' to have shape [N, 4], but got {a.shape}"
+    assert b.ndim == 2 and b.shape[1] == 4, f"Expected 'b' to have shape [M, 4], but got {b.shape}"
+
+    # Compute intersection
+    iw = torch.min(a[:, None, 2], b[:, 2]) - torch.max(a[:, None, 0], b[:, 0])
+    ih = torch.min(a[:, None, 3], b[:, 3]) - torch.max(a[:, None, 1], b[:, 1])
 
     iw = torch.clamp(iw, min=0)
     ih = torch.clamp(ih, min=0)
-
-    ua = torch.unsqueeze((a[:, 2] - a[:, 0]) * (a[:, 3] - a[:, 1]), dim=1) + area - iw * ih
-
-    ua = torch.clamp(ua, min=1e-8)
-
     intersection = iw * ih
 
-    IoU = intersection / ua
+    # Compute union
+    area_a = (a[:, 2] - a[:, 0]) * (a[:, 3] - a[:, 1])
+    area_b = (b[:, 2] - b[:, 0]) * (b[:, 3] - b[:, 1])
+    union = area_a[:, None] + area_b - intersection
 
+    union = torch.clamp(union, min=1e-8)  # Avoid division by zero
+
+    # Compute IoU
+    IoU = intersection / union
     return IoU
+
 
 class FocalLoss(nn.Module):
     #def __init__(self):
@@ -175,3 +191,127 @@ class FocalLoss(nn.Module):
         return torch.stack(classification_losses).mean(dim=0, keepdim=True), torch.stack(regression_losses).mean(dim=0, keepdim=True)
 
 
+class SequenceFocalLoss(nn.Module):
+    def forward(self, classifications, regressions, anchors, annotations):
+        alpha = 0.25
+        gamma = 2.0
+
+        # Validate inputs
+        assert classifications.ndim == 4, f"Expected 4D classifications, got {classifications.shape}"
+        assert regressions.ndim == 4, f"Expected 4D regressions, got {regressions.shape}"
+        assert anchors.ndim == 3 and anchors.shape[-1] == 4, f"Expected anchors [B, T, N, 4], got {anchors.shape}"
+
+        # Adjust annotation validation
+        if annotations.ndim == 4:
+            assert annotations.shape[-1] == 5, f"Expected annotations [B, T, M, 5], got {annotations.shape}"
+        else:
+            raise ValueError(f"Unexpected annotations shape: {annotations.shape}")
+
+        batch_size, time_steps, num_anchors, num_classes = classifications.shape
+        classification_losses = []
+        regression_losses = []
+        for b in range(batch_size):
+            for t in range(time_steps):
+                classification = classifications[b, t]  # [N, C]
+                regression = regressions[b, t]          # [N, 4]
+                anchor = anchors[b]  # [N, 4], remove time dimension
+                annotation = annotations[b, t]  # [M, 5]
+
+                # Ensure anchors have correct shape
+                assert anchor.ndim == 2 and anchor.shape[1] == 4, f"Anchor shape mismatch: {anchor.shape}"
+
+                # Filter valid annotations
+                annotation = annotation[annotation[:, 4] != -1]  # [M, 5]
+                if annotation.shape[0] == 0:  # No valid annotations
+                    continue
+
+                # Compute IoU
+                IoU = calc_iou(anchor, annotation[:, :4])  # Shape: [N, M]
+                IoU_max, IoU_argmax = torch.max(IoU, dim=1)
+
+                # Initialize targets
+                targets = torch.ones((num_anchors, num_classes), device=classification.device) * -1
+
+                # Ensure background_mask matches the first dimension of targets
+                # Create a mask for background anchors
+                background_mask = IoU_max < 0.4
+
+                # Expand the mask to match the targets shape
+                background_mask = background_mask.unsqueeze(-1).expand(-1, targets.shape[1])
+
+                # Use the mask to set background targets
+                targets[background_mask] = 0
+
+                # Set positive targets
+                positive_indices = IoU_max >= 0.5
+                num_positive_anchors = positive_indices.sum()
+
+                if num_positive_anchors > 0:
+                    assigned_annotations = annotation[IoU_argmax[positive_indices]]
+                    targets[positive_indices, :] = 0
+                    targets[positive_indices, assigned_annotations[:, 4].long()] = 1
+
+                    classification = torch.clamp(classification, 1e-4, 1.0 - 1e-4)
+                    alpha_factor = torch.where(targets == 1, alpha, 1 - alpha)
+                    focal_weight = torch.where(targets == 1, 1 - classification, classification)
+                    focal_weight = alpha_factor * (focal_weight ** gamma)
+                    bce = -(targets * torch.log(classification) + (1.0 - targets) * torch.log(1.0 - classification))
+                    cls_loss = focal_weight * bce
+                    cls_loss = torch.where(targets != -1, cls_loss, torch.zeros_like(cls_loss))
+                    if cls_loss.numel() > 0:
+                        classification_losses.append(cls_loss.sum() / torch.clamp(num_positive_anchors.float(), min=1.0))
+                    else:
+                        classification_losses.append(torch.tensor(0.0, device=classification.device))
+                else:
+                    # No positive anchors, append 0 loss
+                    classification_losses.append(torch.tensor(0.0, device=classification.device))
+
+                # Regression loss
+                if num_positive_anchors > 0:
+                    # Assigned annotations are already matched to positive anchors
+                    assigned_annotations = annotation[IoU_argmax[positive_indices]]
+                    anchor = anchor[positive_indices]
+                    regression = regression[positive_indices]
+
+                    anchor_widths = anchor[:, 2] - anchor[:, 0]
+                    anchor_heights = anchor[:, 3] - anchor[:, 1]
+                    anchor_ctr_x = anchor[:, 0] + 0.5 * anchor_widths
+                    anchor_ctr_y = anchor[:, 1] + 0.5 * anchor_heights
+
+                    gt_widths = assigned_annotations[:, 2] - assigned_annotations[:, 0]
+                    gt_heights = assigned_annotations[:, 3] - assigned_annotations[:, 1]
+                    gt_ctr_x = assigned_annotations[:, 0] + 0.5 * gt_widths
+                    gt_ctr_y = assigned_annotations[:, 1] + 0.5 * gt_heights
+
+                    gt_widths = torch.clamp(gt_widths, min=1)
+                    gt_heights = torch.clamp(gt_heights, min=1)
+
+                    targets_dx = (gt_ctr_x - anchor_ctr_x) / anchor_widths
+                    targets_dy = (gt_ctr_y - anchor_ctr_y) / anchor_heights
+                    targets_dw = torch.log(gt_widths / anchor_widths)
+                    targets_dh = torch.log(gt_heights / anchor_heights)
+
+                    targets = torch.stack((targets_dx, targets_dy, targets_dw, targets_dh), dim=1)
+                    targets = targets / torch.tensor([0.1, 0.1, 0.2, 0.2], device=targets.device)
+
+                    regression_diff = torch.abs(targets - regression)
+                    reg_loss = torch.where(
+                        regression_diff < 1.0 / 9.0,
+                        0.5 * 9.0 * regression_diff ** 2,
+                        regression_diff - 0.5 / 9.0
+                    )
+                    if reg_loss.numel() > 0:
+                        regression_losses.append(reg_loss.mean())
+                    else:
+                        regression_losses.append(torch.tensor(0.0, device=classification.device))
+                else:
+                    regression_losses.append(torch.tensor(0.0, device=classification.device))
+
+
+        # Ensure the lists are not empty before stacking
+        if not classification_losses:
+            classification_losses.append(torch.tensor(0.0, device=classification.device))
+        if not regression_losses:
+            regression_losses.append(torch.tensor(0.0, device=classification.device))
+
+        return torch.stack(classification_losses).mean(), torch.stack(regression_losses).mean()
