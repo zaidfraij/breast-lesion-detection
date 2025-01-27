@@ -2,9 +2,10 @@
 The goal of this project is to develop, evaluate, and experiment with object detection models for automatically identifying and localizing breast lesions in ultrasound videos.
 
 Main Focus:
+
     - Develop a deep learning-based object detection model for identifying and localizing breast lesions in ultrasound videos.
-    -Explore temporal coherence between video frames to improve detection accuracy.
-    -Evaluate the model’s performance on publicly available datasets, comparing it to baseline methods.
+    - Explore temporal coherence between video frames to improve detection accuracy.
+    - Evaluate the model’s performance on publicly available datasets, comparing it to baseline methods.
 
 ## Installation
 
@@ -16,11 +17,11 @@ Main Focus:
 
     For example: 
     
-    '''
+    ```
     pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1 --extra-index-url https://download.pytorch.org/whl/cu117
-    '''
+    ```
 
-4) Install the required packages:
+5) Install the required packages:
 
     ```
     pip install -r requirements.txt
@@ -29,18 +30,18 @@ Main Focus:
 ## Dataset
 We use the annotated ultra-sound breast videos from https://arxiv.org/pdf/2207.00141
 
-"""
+```
 code_root/
 Miccai 2022 BUV Dataset/
       ├── rawframes/
       ├── annotations/
           ├── instances_imagenet_vid_train_15frames.json
           └── instances_imagenet_vid_val.json
-"""
+```
 
 ## Baseline
 
-We use RetinaNet with pre-trained ResNet as backbone (GitHub GitHub - yhenon/pytorch-retinanet: Pytorch implementation of…)
+We use RetinaNet with pre-trained ResNet as backbone (see [Repo](https://github.com/yhenon/pytorch-retinanet))
 
 You can set the depth of the resnet model using the --depth argument. Depth must be one of 18, 34, 50, 101 or 152. Note that deeper models are more accurate but are slower and use more memory.
 
