@@ -14,17 +14,17 @@ Main Focus:
 
 3) Install PyTorch and torchvision (following instructions [here](https://pytorch.org/))
 
-For example: 
-
-'''
-pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1 --extra-index-url https://download.pytorch.org/whl/cu117
-'''
+    For example: 
+    
+    '''
+    pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1 --extra-index-url https://download.pytorch.org/whl/cu117
+    '''
 
 4) Install the required packages:
 
-```
-pip install -r requirements.txt
-```
+    ```
+    pip install -r requirements.txt
+    ```
 
 ## Dataset
 We use the annotated ultra-sound breast videos from https://arxiv.org/pdf/2207.00141
