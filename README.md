@@ -1,41 +1,55 @@
-# pytorch-retinanet
-Pytorch  implementation of RetinaNet object detection as described in [Focal Loss for Dense Object Detection](https://arxiv.org/abs/1708.02002) by Tsung-Yi Lin, Priya Goyal, Ross Girshick, Kaiming He and Piotr Dollár.
+# Breast Lesion Detection Experiments on Breast Ultra-Sound Video Datasets
+The goal of this project is to develop, evaluate, and experiment with object detection models for automatically identifying and localizing breast lesions in ultrasound videos.
 
-This implementation is primarily designed to be easy to read and simple to modify.
-
+Main Focus:
+    - Develop a deep learning-based object detection model for identifying and localizing breast lesions in ultrasound videos.
+    -Explore temporal coherence between video frames to improve detection accuracy.
+    -Evaluate the model’s performance on publicly available datasets, comparing it to baseline methods.
 
 ## Installation
 
 1) Clone this repo
 
-2) Install the required packages:
+2) Create conda environment for this project (Recommended)
+
+3) Install PyTorch and torchvision (following instructions [here](https://pytorch.org/))
+
+For example: 
+
+'''
+pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1 --extra-index-url https://download.pytorch.org/whl/cu117
+'''
+
+4) Install the required packages:
 
 ```
-apt-get install tk-dev python-tk
+pip install -r requirements.txt
 ```
 
-3) Install the python packages:
-	
-```
-pip install pandas
-pip install pycocotools
-pip install opencv-python
-pip install requests
+## Dataset
+We use the annotated ultra-sound breast videos from https://arxiv.org/pdf/2207.00141
 
-```
+"""
+code_root/
+Miccai 2022 BUV Dataset/
+      ├── rawframes/
+      ├── annotations/
+          ├── instances_imagenet_vid_train_15frames.json
+          └── instances_imagenet_vid_val.json
+"""
+
+## Baseline
+
+We use RetinaNet with pre-trained ResNet as backbone (GitHub GitHub - yhenon/pytorch-retinanet: Pytorch implementation of…)
+
+You can set the depth of the resnet model using the --depth argument. Depth must be one of 18, 34, 50, 101 or 152. Note that deeper models are more accurate but are slower and use more memory.
 
 ## Training
 
-The network can be trained using the `train.py` script. Currently, two dataloaders are available: COCO and CSV. For training on coco, use
+The network can be trained using the `train.py` script through a COCO dataloader.
 
 ```
-python train.py --dataset coco --coco_path ../coco --depth 50
-```
-
-For training using a custom dataset, with annotations in CSV format (see below), use
-
-```
-python train.py --dataset csv --csv_train <path/to/train_annots.csv>  --csv_classes <path/to/train/class_list.csv>  --csv_val <path/to/val_annots.csv>
+python train.py --dataset coco --coco_path "..\Miccai 2022 BUV Dataset" --depth 50
 ```
 
 ## Validation
@@ -64,24 +78,6 @@ This produces the following results:
 
 For CSV Datasets (more info on those below), run the following script to validate:
 
-`python csv_validation.py --csv_annotations_path path/to/annotations.csv --model_path path/to/model.pt --images_path path/to/images_dir --class_list_path path/to/class_list.csv   (optional) iou_threshold iou_thres (0<iou_thresh<1) `
-
-It produces following resullts:
-
-```
-label_1 : (label_1_mAP)
-Precision :  ...
-Recall:  ...
-
-label_2 : (label_2_mAP)
-Precision :  ...
-Recall:  ...
-```
-
-You can also configure csv_eval.py script to save the precision-recall curve on disk.
-
-
-
 ## Visualization
 
 To visualize the network detection, use `visualize.py`:
@@ -93,58 +89,4 @@ This will visualize bounding boxes on the validation set. To visualise with a CS
 
 ```
 python visualize.py --dataset csv --csv_classes <path/to/train/class_list.csv>  --csv_val <path/to/val_annots.csv> --model <path/to/model.pt>
-```
-
-## Model
-The retinanet model uses a resnet backbone. You can set the depth of the resnet model using the --depth argument. Depth must be one of 18, 34, 50, 101 or 152. Note that deeper models are more accurate but are slower and use more memory.
-
-## CSV datasets
-The `CSVGenerator` provides an easy way to define your own datasets.
-It uses two CSV files: one file containing annotations and one file containing a class name to ID mapping.
-
-### Annotations format
-The CSV file with annotations should contain one annotation per line.
-Images with multiple bounding boxes should use one row per bounding box.
-Note that indexing for pixel values starts at 0.
-The expected format of each line is:
-```
-path/to/image.jpg,x1,y1,x2,y2,class_name
-```
-
-Some images may not contain any labeled objects.
-To add these images to the dataset as negative examples,
-add an annotation where `x1`, `y1`, `x2`, `y2` and `class_name` are all empty:
-```
-path/to/image.jpg,,,,,
-```
-
-A full example:
-```
-/data/imgs/img_001.jpg,837,346,981,456,cow
-/data/imgs/img_002.jpg,215,312,279,391,cat
-/data/imgs/img_002.jpg,22,5,89,84,bird
-/data/imgs/img_003.jpg,,,,,
-```
-
-This defines a dataset with 3 images.
-`img_001.jpg` contains a cow.
-`img_002.jpg` contains a cat and a bird.
-`img_003.jpg` contains no interesting objects/animals.
-
-
-### Class mapping format
-The class name to ID mapping file should contain one mapping per line.
-Each line should use the following format:
-```
-class_name,id
-```
-
-Indexing for classes starts at 0.
-Do not include a background class as it is implicit.
-
-For example:
-```
-cow,0
-cat,1
-bird,2
 ```
