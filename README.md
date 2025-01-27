@@ -86,8 +86,3 @@ To visualize the network detection, use `visualize.py`:
 ```
 python visualize.py --dataset coco --coco_path ../coco --model <path/to/model.pt>
 ```
-This will visualize bounding boxes on the validation set. To visualise with a CSV dataset, use:
-
-```
-python visualize.py --dataset csv --csv_classes <path/to/train/class_list.csv>  --csv_val <path/to/val_annots.csv> --model <path/to/model.pt>
-```
