@@ -435,8 +435,11 @@ class ResNetWithTemporalAttention(nn.Module):
                 finalAnchorBoxesIndexes = finalAnchorBoxesIndexes.cuda()
                 finalAnchorBoxesCoordinates = finalAnchorBoxesCoordinates.cuda()
 
-            for i in range(classification.shape[2]):
-                scores = torch.squeeze(classification[:, :, i])
+            for i in range(classification.shape[3]):
+                first_classification = classification[:, 0, :, :]
+                scores = torch.squeeze(first_classification[:, :, i])
+
+      
                 scores_over_thresh = (scores > 0.05)
                 if scores_over_thresh.sum() == 0:
                     continue

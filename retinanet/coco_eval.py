@@ -17,9 +17,6 @@ def evaluate_coco(dataset, model, threshold=0.05, model_path=None):
             image_ids = [dataset.image_ids[index] for index in range(len(dataset))]
             coco_pred = coco_true.loadRes(bbox_output_file)
             print(coco_pred)
-
-
-
         else:
             # start collecting results
             results = []
@@ -146,7 +143,7 @@ def evaluate_coco_sequence(dataset, model, threshold=0.05, model_path=None):
 
             for index in range(len(dataset)):
                 data = dataset[index]  # Sample includes a sequence of frames
-                scales = data['scale']  # Scale for each frame in the sequence
+                scale = data['scale']  # Scale for each frame in the sequence
                 imgs = data['img']  # Shape: [T, C, H, W]
                 imgs = imgs.permute(0, 3, 1, 2)  # Convert to [T, C, H, W]
 
@@ -160,42 +157,39 @@ def evaluate_coco_sequence(dataset, model, threshold=0.05, model_path=None):
                 scores = scores.cpu()
                 labels = labels.cpu()
                 boxes = boxes.cpu()
+                boxes /= scale
 
-                # Process predictions for each frame
-                T = boxes.shape[0]  # Number of frames
-                for t in range(T):
-                    frame_boxes = boxes[t]  # Predictions for frame `t`
-                    frame_scores = scores[t]
-                    frame_labels = labels[t]
-                    frame_scale = scales[t]  # Scale for this frame
+                # Get the ground truth category ID for the current image
+                gt_annotations = dataset.coco.loadAnns(dataset.coco.getAnnIds(imgIds=dataset.image_ids[index]))
+                if len(gt_annotations) > 0:
+                    gt_category_id = gt_annotations[0]['category_id']
+                else:
+                    gt_category_id = 1  # Default category ID if no ground truth annotations are found
 
-                    # Correct boxes for image scale
-                    frame_boxes /= frame_scale
+                if boxes.shape[0] > 0:
+                    # Convert to (x, y, w, h) (MS COCO standard)
+                    boxes[:, 2] -= boxes[:, 0]
+                    boxes[:, 3] -= boxes[:, 1]
 
-                    if frame_boxes.shape[0] > 0:
-                        # Convert to (x, y, w, h) (MS COCO standard)
-                        frame_boxes[:, 2] -= frame_boxes[:, 0]
-                        frame_boxes[:, 3] -= frame_boxes[:, 1]
+                    # Process each detection
+                    for box_id in range(boxes.shape[0]):
+                        score = float(scores[box_id])
+                        label = int(labels[box_id])
+                        box = boxes[box_id, :]
 
-                        # Process each detection
-                        for box_id in range(frame_boxes.shape[0]):
-                            score = float(frame_scores[box_id])
-                            label = int(frame_labels[box_id])
-                            box = frame_boxes[box_id, :]
+                        # Filter out low-confidence predictions
+                        if score < threshold:
+                            break
 
-                            # Filter out low-confidence predictions
-                            if score < threshold:
-                                break
+                        # Create result for COCO evaluation
+                        image_result = {
+                            'image_id': dataset.image_ids[index],  # Use sequence ID
+                            'category_id': gt_category_id,
+                            'score': score,
+                            'bbox': box.tolist(),
+                        }
 
-                            # Create result for COCO evaluation
-                            image_result = {
-                                'image_id': dataset.image_ids[index],  # Use sequence ID
-                                'category_id': dataset.label_to_coco_label(label),
-                                'score': score,
-                                'bbox': box.tolist(),
-                            }
-
-                            results.append(image_result)
+                        results.append(image_result)
 
                 # Append sequence ID to processed list
                 image_ids.append(dataset.image_ids[index])
@@ -203,15 +197,15 @@ def evaluate_coco_sequence(dataset, model, threshold=0.05, model_path=None):
                 # Print progress
                 print('{}/{}'.format(index + 1, len(dataset)), end='\r')
 
-        if not len(results):
-            return
+            if not len(results):
+                return
 
-        # Write output
-        json.dump(results, open(bbox_output_file, 'w'), indent=4)
+            # Write output
+            json.dump(results, open(bbox_output_file, 'w'), indent=4)
 
-        # Load results in COCO evaluation tool
-        coco_true = dataset.coco
-        coco_pred = coco_true.loadRes(bbox_output_file)
+            # Load results in COCO evaluation tool
+            coco_true = dataset.coco
+            coco_pred = coco_true.loadRes(bbox_output_file)
         
         # Run COCO evaluation
         coco_eval = COCOeval(coco_true, coco_pred, 'bbox')
