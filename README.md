@@ -77,8 +77,6 @@ This produces the following results:
  Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.597
 ```
 
-For CSV Datasets (more info on those below), run the following script to validate:
-
 ## Visualization
 
 To visualize the network detection, use `visualize.py`:
