@@ -147,13 +147,13 @@ def main(args=None):
                     del regression_loss
 
             save_model_path = '{}_retinanet_{}.pt'.format(parser.dataset, epoch_num)
+            torch.save(retinanet.module, save_model_path)
             if parser.dataset == 'coco':
                 print('Evaluating dataset')
-                coco_eval.evaluate_coco_sequence(dataset_val, retinanet)  # Use the updated temporal `coco_eval`
+                coco_eval.evaluate_coco_sequence(dataset_val, retinanet, model_path=save_model_path)  # Use the updated temporal `coco_eval`
 
             scheduler.step(np.mean(epoch_loss))
 
-            torch.save(retinanet.module, save_model_path)
 
     except KeyboardInterrupt:
         print('Training interrupted. Saving model...')

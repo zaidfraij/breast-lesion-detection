@@ -231,4 +231,4 @@ def evaluate_coco_sequence(dataset, model, threshold=0.05, model_path=None):
 
         model.train()
 
-        return
+        return metrics
