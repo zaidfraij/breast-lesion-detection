@@ -300,6 +300,9 @@ class TemporalAttention(nn.Module):
     def __init__(self, d_model, num_heads):
         super(TemporalAttention, self).__init__()
         self.attention = nn.MultiheadAttention(embed_dim=d_model, num_heads=num_heads, batch_first=True)
+        self.pos_encoder = nn.Parameter(torch.randn(1, 1000, d_model))  # Max 1000 frames
+
+
 
     def forward(self, x):
         # Input shape: [B, T, C, H, W]
@@ -309,6 +312,7 @@ class TemporalAttention(nn.Module):
         N = x.shape[1]
 
         # Apply attention for each spatial location (N)
+        x = x + self.pos_encoder[:, :T, :]  # Inject position
         x = x.reshape(B * N, T, C)  # [B * N, T, C]
         attended, _ = self.attention(x, x, x)  # Temporal attention
         attended = attended.view(B, N, T, C).permute(0, 2, 3, 1)  # [B, T, C, N]
@@ -376,9 +380,9 @@ class ResNetWithTemporalAttention(nn.Module):
     def forward(self, inputs):
         if self.training:
             img_batch, annotations = inputs
+            annotations= annotations[:,0, :, :]
         else:
             img_batch = inputs
-
         B, T, C, H, W = img_batch.shape  # [B, T, C, H, W]
         features = []
 
@@ -398,7 +402,6 @@ class ResNetWithTemporalAttention(nn.Module):
 
         # Stack features along temporal dimension
         features = [torch.stack([f[i] for f in features], dim=1) for i in range(3)]
-
         # Apply temporal attention
         features[0] = self.temporal_attention_C3(features[0])
         features[1] = self.temporal_attention_C4(features[1])
@@ -409,13 +412,15 @@ class ResNetWithTemporalAttention(nn.Module):
         features[1] = self.feature_align_C4(features[1].flatten(0, 1)).view(B, T, 256, features[1].shape[3], features[1].shape[4])
         features[2] = self.feature_align_C5(features[2].flatten(0, 1)).view(B, T, 256, features[2].shape[3], features[2].shape[4])
 
-        # Pass features through FPN frame by frame
-        pyramid_features = [self.fpn([f[:, t] for f in features]) for t in range(T)]
+        # Select the first frame's features for classification and regression
+        first_frame_features = [f[:, 0] for f in features]
 
-        # Collect classification and regression outputs
-        classification = torch.stack([torch.cat([self.classificationModel(feature) for feature in pyramid], dim=1) for pyramid in pyramid_features], dim=1)
-        regression = torch.stack([torch.cat([self.regressionModel(feature) for feature in pyramid], dim=1) for pyramid in pyramid_features], dim=1)
+        # Pass the first frame's features through FPN
+        pyramid_features = self.fpn(first_frame_features)
 
+        # Collect classification and regression outputs for the first frame
+        classification = torch.cat([self.classificationModel(feature) for feature in pyramid_features], dim=1)
+        regression = torch.cat([self.regressionModel(feature) for feature in pyramid_features], dim=1)
         anchors = self.anchors(img_batch[:, 0])  # Anchors remain the same for all frames
 
         if self.training:
@@ -435,9 +440,8 @@ class ResNetWithTemporalAttention(nn.Module):
                 finalAnchorBoxesIndexes = finalAnchorBoxesIndexes.cuda()
                 finalAnchorBoxesCoordinates = finalAnchorBoxesCoordinates.cuda()
 
-            for i in range(classification.shape[3]):
-                first_classification = classification[:, 0, :, :]
-                scores = torch.squeeze(first_classification[:, :, i])
+            for i in range(classification.shape[2]):
+                scores = torch.squeeze(classification[:, :, i])
 
       
                 scores_over_thresh = (scores > 0.05)
