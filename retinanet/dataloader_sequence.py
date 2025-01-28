@@ -291,12 +291,13 @@ class Augmenter(object):
         time_steps = images.shape[0]
         augmented_images = []
         augmented_annots = []
+        flip_bool = np.random.rand() < flip_x
 
         for t in range(time_steps):
             image = images[t]
             annot = annots[t]
 
-            if np.random.rand() < flip_x:
+            if flip_bool:
                 image = image[:, ::-1, :]  # Flip horizontally
                 rows, cols, channels = image.shape
 
