@@ -55,7 +55,6 @@ class FocalLoss(nn.Module):
         anchor_ctr_y   = anchor[:, 1] + 0.5 * anchor_heights
 
         for j in range(batch_size):
-
             classification = classifications[j, :, :]
             regression = regressions[j, :, :]
 
@@ -197,121 +196,122 @@ class SequenceFocalLoss(nn.Module):
         gamma = 2.0
 
         # Validate inputs
-        assert classifications.ndim == 4, f"Expected 4D classifications, got {classifications.shape}"
-        assert regressions.ndim == 4, f"Expected 4D regressions, got {regressions.shape}"
+        assert classifications.ndim == 3, f"Expected 3D classifications, got {classifications.shape}"
+        assert regressions.ndim == 3, f"Expected 3D regressions, got {regressions.shape}"
         assert anchors.ndim == 3 and anchors.shape[-1] == 4, f"Expected anchors [B, T, N, 4], got {anchors.shape}"
 
         # Adjust annotation validation
-        if annotations.ndim == 4:
+        if annotations.ndim == 3:
             assert annotations.shape[-1] == 5, f"Expected annotations [B, T, M, 5], got {annotations.shape}"
         else:
             raise ValueError(f"Unexpected annotations shape: {annotations.shape}")
 
-        batch_size, time_steps, num_anchors, num_classes = classifications.shape
+        batch_size, num_anchors, num_classes = classifications.shape
         classification_losses = []
         regression_losses = []
         for b in range(batch_size):
-            for t in range(time_steps):
-                classification = classifications[b, t]  # [N, C]
-                regression = regressions[b, t]          # [N, 4]
-                anchor = anchors[b]  # [N, 4], remove time dimension
-                annotation = annotations[b, t]  # [M, 5]
+            classification = classifications[b]  # [N, C]
+            regression = regressions[b]          # [N, 4]
+            anchor = anchors[b]  # [N, 4], remove time dimension
+            annotation = annotations[b]  # [M, 5]
 
-                # Ensure anchors have correct shape
-                assert anchor.ndim == 2 and anchor.shape[1] == 4, f"Anchor shape mismatch: {anchor.shape}"
+            # Ensure anchors have correct shape
+            assert anchor.ndim == 2 and anchor.shape[1] == 4, f"Anchor shape mismatch: {anchor.shape}"
 
-                # Filter valid annotations
-                annotation = annotation[annotation[:, 4] != -1]  # [M, 5]
-                if annotation.shape[0] == 0:  # No valid annotations
-                    continue
+            # Filter valid annotations
+            annotation = annotation[annotation[:, 4] != -1]  # [M, 5]
+            if annotation.shape[0] == 0:  # No valid annotations
+                continue
 
-                # Compute IoU
-                IoU = calc_iou(anchor, annotation[:, :4])  # Shape: [N, M]
-                IoU_max, IoU_argmax = torch.max(IoU, dim=1)
+            # Compute IoU
+            IoU = calc_iou(anchor, annotation[:, :4])  # Shape: [N, M]
+            IoU_max, IoU_argmax = torch.max(IoU, dim=1)
 
-                # Initialize targets
-                targets = torch.ones((num_anchors, num_classes), device=classification.device) * -1
+            # Initialize targets
+            targets = torch.ones((num_anchors, num_classes), device=classification.device) * -1
 
-                # Ensure background_mask matches the first dimension of targets
-                # Create a mask for background anchors
-                background_mask = IoU_max < 0.4
+            # Ensure background_mask matches the first dimension of targets
+            # Create a mask for background anchors
+            background_mask = IoU_max < 0.4
 
-                # Expand the mask to match the targets shape
-                background_mask = background_mask.unsqueeze(-1).expand(-1, targets.shape[1])
+            # Expand the mask to match the targets shape
+            background_mask = background_mask.unsqueeze(-1).expand(-1, targets.shape[1])
 
-                # Use the mask to set background targets
-                targets[background_mask] = 0
+            # Use the mask to set background targets
+            targets[background_mask] = 0
 
-                # Set positive targets
-                positive_indices = IoU_max >= 0.5
-                num_positive_anchors = positive_indices.sum()
+            # Set positive targets
+            positive_indices = IoU_max >= 0.5
+            num_positive_anchors = positive_indices.sum()
 
-                if num_positive_anchors > 0:
-                    assigned_annotations = annotation[IoU_argmax[positive_indices]]
-                    targets[positive_indices, :] = 0
-                    targets[positive_indices, assigned_annotations[:, 4].long()] = 1
+            if num_positive_anchors > 0:
+                assigned_annotations = annotation[IoU_argmax[positive_indices]]
+                targets[positive_indices, :] = 0
+                targets[positive_indices, assigned_annotations[:, 4].long()] = 1
 
-                    classification = torch.clamp(classification, 1e-4, 1.0 - 1e-4)
-                    alpha_factor = torch.where(targets == 1, alpha, 1 - alpha)
-                    focal_weight = torch.where(targets == 1, 1 - classification, classification)
-                    focal_weight = alpha_factor * (focal_weight ** gamma)
-                    bce = -(targets * torch.log(classification) + (1.0 - targets) * torch.log(1.0 - classification))
-                    cls_loss = focal_weight * bce
-                    cls_loss = torch.where(targets != -1, cls_loss, torch.zeros_like(cls_loss))
-                    if cls_loss.numel() > 0:
-                        classification_losses.append(cls_loss.sum() / torch.clamp(num_positive_anchors.float(), min=1.0))
-                    else:
-                        classification_losses.append(torch.tensor(0.0, device=classification.device))
+                classification = torch.clamp(classification, 1e-4, 1.0 - 1e-4)
+                alpha_factor = torch.where(targets == 1, alpha, 1 - alpha)
+                focal_weight = torch.where(targets == 1, 1 - classification, classification)
+                focal_weight = alpha_factor * (focal_weight ** gamma)
+                bce = -(targets * torch.log(classification) + (1.0 - targets) * torch.log(1.0 - classification))
+                cls_loss = focal_weight * bce
+                cls_loss = torch.where(targets != -1, cls_loss, torch.zeros_like(cls_loss))
+                if cls_loss.numel() > 0:
+                    classification_losses.append(cls_loss.sum() / torch.clamp(num_positive_anchors.float(), min=1.0))
                 else:
-                    # No positive anchors, append 0 loss
                     classification_losses.append(torch.tensor(0.0, device=classification.device))
+            else:
+                # No positive anchors, append 0 loss
+                classification_losses.append(torch.tensor(0.0, device=classification.device))
 
-                # Regression loss
-                if num_positive_anchors > 0:
-                    # Assigned annotations are already matched to positive anchors
-                    assigned_annotations = annotation[IoU_argmax[positive_indices]]
-                    anchor = anchor[positive_indices]
-                    regression = regression[positive_indices]
+            # Regression loss
+            if num_positive_anchors > 0:
+                # Assigned annotations are already matched to positive anchors
+                assigned_annotations = annotation[IoU_argmax[positive_indices]]
+                anchor = anchor[positive_indices]
+                regression = regression[positive_indices]
 
-                    anchor_widths = anchor[:, 2] - anchor[:, 0]
-                    anchor_heights = anchor[:, 3] - anchor[:, 1]
-                    anchor_ctr_x = anchor[:, 0] + 0.5 * anchor_widths
-                    anchor_ctr_y = anchor[:, 1] + 0.5 * anchor_heights
+                anchor_widths = anchor[:, 2] - anchor[:, 0]
+                anchor_heights = anchor[:, 3] - anchor[:, 1]
+                anchor_ctr_x = anchor[:, 0] + 0.5 * anchor_widths
+                anchor_ctr_y = anchor[:, 1] + 0.5 * anchor_heights
 
-                    gt_widths = assigned_annotations[:, 2] - assigned_annotations[:, 0]
-                    gt_heights = assigned_annotations[:, 3] - assigned_annotations[:, 1]
-                    gt_ctr_x = assigned_annotations[:, 0] + 0.5 * gt_widths
-                    gt_ctr_y = assigned_annotations[:, 1] + 0.5 * gt_heights
+                gt_widths = assigned_annotations[:, 2] - assigned_annotations[:, 0]
+                gt_heights = assigned_annotations[:, 3] - assigned_annotations[:, 1]
+                gt_ctr_x = assigned_annotations[:, 0] + 0.5 * gt_widths
+                gt_ctr_y = assigned_annotations[:, 1] + 0.5 * gt_heights
 
-                    gt_widths = torch.clamp(gt_widths, min=1)
-                    gt_heights = torch.clamp(gt_heights, min=1)
+                gt_widths = torch.clamp(gt_widths, min=1)
+                gt_heights = torch.clamp(gt_heights, min=1)
 
-                    targets_dx = (gt_ctr_x - anchor_ctr_x) / anchor_widths
-                    targets_dy = (gt_ctr_y - anchor_ctr_y) / anchor_heights
-                    targets_dw = torch.log(gt_widths / anchor_widths)
-                    targets_dh = torch.log(gt_heights / anchor_heights)
+                targets_dx = (gt_ctr_x - anchor_ctr_x) / anchor_widths
+                targets_dy = (gt_ctr_y - anchor_ctr_y) / anchor_heights
+                targets_dw = torch.log(gt_widths / anchor_widths)
+                targets_dh = torch.log(gt_heights / anchor_heights)
 
-                    targets = torch.stack((targets_dx, targets_dy, targets_dw, targets_dh), dim=1)
-                    targets = targets / torch.tensor([0.1, 0.1, 0.2, 0.2], device=targets.device)
+                targets = torch.stack((targets_dx, targets_dy, targets_dw, targets_dh), dim=1)
+                targets = targets / torch.tensor([0.1, 0.1, 0.2, 0.2], device=targets.device)
 
-                    regression_diff = torch.abs(targets - regression)
-                    reg_loss = torch.where(
-                        regression_diff < 1.0 / 9.0,
-                        0.5 * 9.0 * regression_diff ** 2,
-                        regression_diff - 0.5 / 9.0
-                    )
-                    if reg_loss.numel() > 0:
-                        regression_losses.append(reg_loss.mean())
-                    else:
-                        regression_losses.append(torch.tensor(0.0, device=classification.device))
+                regression_diff = torch.abs(targets - regression)
+                reg_loss = torch.where(
+                    regression_diff < 1.0 / 9.0,
+                    0.5 * 9.0 * regression_diff ** 2,
+                    regression_diff - 0.5 / 9.0
+                )
+                if reg_loss.numel() > 0:
+                    regression_losses.append(reg_loss.mean())
                 else:
                     regression_losses.append(torch.tensor(0.0, device=classification.device))
+            else:
+                regression_losses.append(torch.tensor(0.0, device=classification.device))
 
 
         # Ensure the lists are not empty before stacking
         if not classification_losses:
+            print("No classification losses")
             classification_losses.append(torch.tensor(0.0, device=classification.device))
         if not regression_losses:
+            print("No regression losses")
             regression_losses.append(torch.tensor(0.0, device=classification.device))
 
         return torch.stack(classification_losses).mean(), torch.stack(regression_losses).mean()
