@@ -26,7 +26,7 @@ def main(args=None):
     parser.add_argument('--dataset', help='Dataset type, must be coco.')
     parser.add_argument('--coco_path', help='Path to COCO directory')
     parser.add_argument('--depth', help='Resnet depth, must be one of 18, 34, 50, 101, 152', type=int, default=50)
-    parser.add_argument('--epochs', help='Number of epochs', type=int, default=20)
+    parser.add_argument('--epochs', help='Number of epochs', type=int, default=15)
     parser.add_argument('--sequence_length', help='Number of frames in each temporal sequence', type=int, default=3)
     parser.add_argument('--use_temporal', help='Use temporal model', action='store_true')
 
@@ -43,7 +43,7 @@ def main(args=None):
             set_name='imagenet_vid_train_15frames',
             sequence_length=parser.sequence_length,
             transform=transforms.Compose([Normalizer(), Augmenter(), Resizer()]),
-            only_train_frames=True
+            only_train_frames=False
         )
         dataset_val = CocoDataset(
             parser.coco_path,
@@ -55,12 +55,12 @@ def main(args=None):
     else:
         raise ValueError('Dataset type not understood (must be coco), exiting.')
 
-    sampler = AspectRatioBasedSampler(dataset_train, batch_size=1, drop_last=False)
-    dataloader_train = DataLoader(dataset_train, num_workers=3, collate_fn=collater, batch_sampler=sampler)
+    sampler = AspectRatioBasedSampler(dataset_train, batch_size=5, drop_last=False)
+    dataloader_train = DataLoader(dataset_train, num_workers=2, collate_fn=collater, batch_sampler=sampler)
 
     if dataset_val is not None:
         sampler_val = AspectRatioBasedSampler(dataset_val, batch_size=1, drop_last=False)
-        dataloader_val = DataLoader(dataset_val, num_workers=3, collate_fn=collater, batch_sampler=sampler_val)
+        dataloader_val = DataLoader(dataset_val, num_workers=2, collate_fn=collater, batch_sampler=sampler_val)
 
     # Create the model
     if parser.depth == 18:
