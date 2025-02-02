@@ -163,7 +163,7 @@ class CocoDataset(Dataset):
         return float(image['width']) / float(image['height'])
 
     def num_classes(self):
-        return 80
+        return 2
 
 def collater(data):
     """
@@ -234,52 +234,50 @@ class Resizer(object):
 
     def __call__(self, sample, min_side=608, max_side=1024):
         images, annots = sample['img'], sample['annot']  # `images`: [T, H, W, C], `annots`: [T, M, 5]
-
         time_steps, original_height, original_width, channels = images.shape
 
-        # Determine the scale based on the first frame's dimensions
-        smallest_side = min(original_height, original_width)
-        largest_side = max(original_height, original_width)
+        new_images_list = []
+        new_annots_list = []
 
+        max_annots = max(annot.shape[0] for annot in annots)  # Find the maximum number of annotations across frames
+        new_annots_array = np.ones((time_steps, max_annots, 5), dtype=np.float32) * -1
+        for t in range(time_steps):
+            image = images[t]
+            annot = annots[t]
+            new_image, new_annots, scale = self.resize_one_image(image, annot, min_side, max_side)
+            new_images_list.append(new_image)
+            if annot.shape[0] > 0:
+                new_annots_array[t, :annot.shape[0], :] = new_annots
+        
+        new_images_array = np.array(new_images_list)
+
+        return {
+            'img': torch.from_numpy(new_images_array),  # Shape: [T, H', W', C]
+            'annot': torch.from_numpy(new_annots_array),  # Shape: [T, M, 5]
+            'scale': scale,  # Single scale value used for all frames
+        }
+    
+    def resize_one_image(self, image, annots, min_side, max_side):
+        rows, cols, cns = image.shape
+        smallest_side = min(rows, cols)
         scale = min_side / smallest_side
+        largest_side = max(rows, cols)
+
         if largest_side * scale > max_side:
             scale = max_side / largest_side
 
-        # Resize all frames in the sequence
-        resized_images = []
-        for t in range(time_steps):
-            image = images[t]
-            rows, cols, _ = image.shape
+        image = skimage.transform.resize(image, (int(round(rows*scale)), int(round((cols*scale)))))
+        rows, cols, cns = image.shape
 
-            # Resize image
-            resized_image = skimage.transform.resize(
-                image, (int(round(rows * scale)), int(round(cols * scale))), anti_aliasing=True
-            )
-            resized_images.append(resized_image)
+        pad_w = 32 - rows%32
+        pad_h = 32 - cols%32
 
-        # Pad the resized images to the nearest 32-pixel boundary
-        padded_height = int(np.ceil(resized_images[0].shape[0] / 32.0) * 32)
-        padded_width = int(np.ceil(resized_images[0].shape[1] / 32.0) * 32)
+        new_image = np.zeros((rows + pad_w, cols + pad_h, cns)).astype(np.float32)
+        new_image[:rows, :cols, :] = image.astype(np.float32)
 
-        padded_images = np.zeros((time_steps, padded_height, padded_width, channels), dtype=np.float32)
-        for t in range(time_steps):
-            rows, cols, _ = resized_images[t].shape
-            padded_images[t, :rows, :cols, :] = resized_images[t]
+        annots[:, :4] *= scale
 
-        # Handle annotations
-        max_annots = max(annot.shape[0] for annot in annots)  # Find the maximum number of annotations across frames
-        padded_annots = np.ones((time_steps, max_annots, 5), dtype=np.float32) * -1  # Initialize with -1
-
-        for t in range(time_steps):
-            annot = annots[t]
-            if annot.shape[0] > 0:
-                padded_annots[t, :annot.shape[0], :] = annot * scale  # Scale annotations
-
-        return {
-            'img': torch.from_numpy(padded_images),  # Shape: [T, H', W', C]
-            'annot': torch.from_numpy(padded_annots),  # Shape: [T, M, 5]
-            'scale': scale,  # Single scale value used for all frames
-        }
+        return new_image, annots, scale
 
 
 class Augmenter(object):
