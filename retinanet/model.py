@@ -296,11 +296,21 @@ class ResNet(nn.Module):
 
             return [finalScores, finalAnchorBoxesIndexes, finalAnchorBoxesCoordinates]
 
+def get_sinusoidal_positional_encoding(seq_len, d_model):
+    position = torch.arange(seq_len).unsqueeze(1)
+    div_term = torch.exp(torch.arange(0, d_model, 2) * -(math.log(10000.0) / d_model))
+    pe = torch.zeros(seq_len, d_model)
+    pe[:, 0::2] = torch.sin(position * div_term)
+    pe[:, 1::2] = torch.cos(position * div_term)
+    return pe.unsqueeze(0)  # Shape: [1, seq_len, d_model]
+
 class TemporalAttention(nn.Module):
-    def __init__(self, d_model, num_heads):
+    def __init__(self, d_model, num_heads, use_pos_encoding=False, max_len=1000):
         super(TemporalAttention, self).__init__()
         self.attention = nn.MultiheadAttention(embed_dim=d_model, num_heads=num_heads, batch_first=True)
-        self.pos_encoder = nn.Parameter(torch.randn(1, 1000, d_model))  # Max 1000 frames
+        self.use_pos_encoding = use_pos_encoding
+        self.pos_encoder = get_sinusoidal_positional_encoding(max_len, d_model)
+
 
 
 
@@ -311,8 +321,11 @@ class TemporalAttention(nn.Module):
         x = x.permute(0, 3, 1, 2)  # [B, N, T, C]
         N = x.shape[1]
 
-        # Apply attention for each spatial location (N)
-        x = x + self.pos_encoder[:, :T, :]  # Inject position
+
+        if self.use_pos_encoding:
+            pos_encoding = self.pos_encoder[:, :T, :].to(x.device)  # Ensure positional encoding is on the same device
+            x = x + pos_encoding  # Inject position
+
         x = x.reshape(B * N, T, C)  # [B * N, T, C]
         attended, _ = self.attention(x, x, x)  # Temporal attention
         attended = attended.view(B, N, T, C).permute(0, 2, 3, 1)  # [B, T, C, N]
