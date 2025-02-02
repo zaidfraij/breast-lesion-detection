@@ -181,10 +181,14 @@ def evaluate_coco_sequence(dataset, model, threshold=0.05, model_path=None):
                         if score < threshold:
                             break
 
+                        #category_id = dataset.label_to_coco_label(label)
+                        category_id = gt_category_id
+
                         # Create result for COCO evaluation
+                        #print(dataset.image_ids[index])
                         image_result = {
-                            'image_id': dataset.image_ids[index],  # Use sequence ID
-                            'category_id': gt_category_id,
+                            'image_id': dataset.image_ids[index],
+                            'category_id': category_id,
                             'score': score,
                             'bbox': box.tolist(),
                         }

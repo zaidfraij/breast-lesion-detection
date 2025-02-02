@@ -43,7 +43,7 @@ def main(args=None):
             set_name='imagenet_vid_train_15frames',
             sequence_length=parser.sequence_length,
             transform=transforms.Compose([Normalizer(), Augmenter(), Resizer()]),
-            only_train_frames=False
+            only_train_frames=True
         )
         dataset_val = CocoDataset(
             parser.coco_path,
@@ -55,7 +55,7 @@ def main(args=None):
     else:
         raise ValueError('Dataset type not understood (must be coco), exiting.')
 
-    sampler = AspectRatioBasedSampler(dataset_train, batch_size=5, drop_last=False)
+    sampler = AspectRatioBasedSampler(dataset_train, batch_size=1, drop_last=False)
     dataloader_train = DataLoader(dataset_train, num_workers=2, collate_fn=collater, batch_sampler=sampler)
 
     if dataset_val is not None:
