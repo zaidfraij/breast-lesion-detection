@@ -1,11 +1,10 @@
-# Breast Lesion Detection Experiments on Breast Ultra-Sound Video Datasets
-The goal of this project is to develop, evaluate, and experiment with object detection models for automatically identifying and localizing breast lesions in ultrasound videos.
+# Breast Lesion Detection Experiments on Breast Ultra-Sound Video Datasets Using Retinanet
+The goal of this project is to develop, evaluate, and experiment with Retinanet as a baseline for automatically identifying and localizing breast lesions in ultrasound videos.
 
 Main Focus:
 
-    - Develop a deep learning-based object detection model for identifying and localizing breast lesions in ultrasound videos.
-    - Explore temporal coherence between video frames to improve detection accuracy.
-    - Evaluate the model’s performance on publicly available datasets, comparing it to baseline methods.
+    - Asses Retinanet's ability as a baseline for identifying and localizing breast lesions in ultrasound videos.
+    - Evaluate the model’s performance on publicly available datasets.
 
 ## Installation
 
