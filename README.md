@@ -52,7 +52,6 @@ The network can be trained using the `train.py` script through a COCO dataloader
 ```
 python train.py --dataset coco --coco_path "..\Miccai 2022 BUV Dataset" --depth 50
 ```
-
 ## Validation
 
 Run `coco_validation.py` to validate the code on the COCO dataset. With the above model, run:
@@ -76,6 +75,9 @@ This produces the following results:
  Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.508
  Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.597
 ```
+
+### Trained Models
+|[GoogleDrive](https://drive.google.com/drive/folders/1LtIv-s3jb2hLbtnSJ7GOwkjHPZUGVGVw?usp=sharing)
 
 ## Visualization
 
