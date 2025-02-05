@@ -78,5 +78,5 @@ This produces the following results:
 "AR@[medium]": 0.4084507042253521,
 "AR@[large]": 0.5755061621868032
 ```
-Notes
+## Notes
 The code of this repository is built on [https://github.com/jhl-Det/CVA-Net](https://github.com/yhenon/pytorch-retinanet).
