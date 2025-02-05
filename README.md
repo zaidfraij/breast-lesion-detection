@@ -52,37 +52,30 @@ The network can be trained using the `train.py` script through a COCO dataloader
 ```
 python train.py --dataset coco --coco_path "..\Miccai 2022 BUV Dataset" --depth 50
 ```
+
+## Trained Model
+[GoogleDrive](https://drive.google.com/drive/folders/1LtIv-s3jb2hLbtnSJ7GOwkjHPZUGVGVw?usp=sharing)
+
 ## Validation
 
 Run `coco_validation.py` to validate the code on the COCO dataset. With the above model, run:
 
-`python coco_validation.py --coco_path ~/path/to/coco --model_path /path/to/model/coco_resnet_50_map_0_335_state_dict.pt`
+`python coco_validation.py --coco_path ~/path/to/Miccai 2022 BUV Dataset --model_path /path/to/model/baseline_retinanet_resnet50_buv_weights.pt`
 
 
 This produces the following results:
 
 ```
- Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.335
- Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.499
- Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.357
- Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.167
- Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.369
- Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.466
- Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.282
- Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.429
- Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.458
- Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.255
- Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.508
- Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.597
-```
-
-### Trained Models
-|[GoogleDrive](https://drive.google.com/drive/folders/1LtIv-s3jb2hLbtnSJ7GOwkjHPZUGVGVw?usp=sharing)
-
-## Visualization
-
-To visualize the network detection, use `visualize.py`:
-
-```
-python visualize.py --dataset coco --coco_path ../coco --model <path/to/model.pt>
+"AP@[IoU=0.50:0.95]": 0.30053981363216414,
+"AP@[IoU=0.50]": 0.5416903408144951,
+"AP@[IoU=0.75]": 0.3100322770448007,
+"AP@[small]": -1.0,
+"AP@[medium]": 0.043287723008057874,
+"AP@[large]": 0.30433887332036186,
+"AR@[max=1]": 0.5186767102648328,
+"AR@[max=10]": 0.5717005535497486,
+"AR@[max=100]": 0.5717005535497486,
+"AR@[small]": -1.0,
+"AR@[medium]": 0.4084507042253521,
+"AR@[large]": 0.5755061621868032
 ```
