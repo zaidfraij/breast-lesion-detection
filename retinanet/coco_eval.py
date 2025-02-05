@@ -66,7 +66,7 @@ def evaluate_coco(dataset, model, threshold=0.05, model_path=None):
                         # append detection for each positively labeled class
                         image_result = {
                             'image_id'    : dataset.image_ids[index],
-                            'category_id' : gt_category_id,
+                            'category_id' : dataset.label_to_coco_label(label),
                             'score'       : float(score),
                             'bbox'        : box.tolist(),
                         }
