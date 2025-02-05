@@ -1,150 +1,80 @@
-# pytorch-retinanet
-Pytorch  implementation of RetinaNet object detection as described in [Focal Loss for Dense Object Detection](https://arxiv.org/abs/1708.02002) by Tsung-Yi Lin, Priya Goyal, Ross Girshick, Kaiming He and Piotr Dollár.
+# Breast Lesion Detection Experiments on Breast Ultra-Sound Video Datasets Using Retinanet
+The goal of this project is to develop, evaluate, and experiment with Retinanet as a baseline for automatically identifying and localizing breast lesions in ultrasound videos.
 
-This implementation is primarily designed to be easy to read and simple to modify.
+Main Focus:
 
+    - Asses Retinanet's ability as a baseline for identifying and localizing breast lesions in ultrasound videos.
+    - Evaluate the model’s performance on publicly available datasets.
 
 ## Installation
 
 1) Clone this repo
 
-2) Install the required packages:
+2) Create conda environment for this project (Recommended)
+
+3) Install PyTorch and torchvision (following instructions [here](https://pytorch.org/))
+
+    For example: 
+    
+    ```
+    pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1 --extra-index-url https://download.pytorch.org/whl/cu117
+    ```
+
+5) Install the required packages:
+
+    ```
+    pip install -r requirements.txt
+    ```
+
+## Dataset
+We use the annotated ultra-sound breast videos from https://arxiv.org/pdf/2207.00141
 
 ```
-apt-get install tk-dev python-tk
+code_root/
+Miccai 2022 BUV Dataset/
+      ├── rawframes/
+      ├── annotations/
+          ├── instances_imagenet_vid_train_15frames.json
+          └── instances_imagenet_vid_val.json
 ```
 
-3) Install the python packages:
-	
-```
-pip install pandas
-pip install pycocotools
-pip install opencv-python
-pip install requests
+## Baseline
 
-```
+We use RetinaNet with pre-trained ResNet as backbone (see [Repo](https://github.com/yhenon/pytorch-retinanet))
+
+You can set the depth of the resnet model using the --depth argument. Depth must be one of 18, 34, 50, 101 or 152. Note that deeper models are more accurate but are slower and use more memory.
 
 ## Training
 
-The network can be trained using the `train.py` script. Currently, two dataloaders are available: COCO and CSV. For training on coco, use
+The network can be trained using the `train.py` script through a COCO dataloader.
 
 ```
-python train.py --dataset coco --coco_path ../coco --depth 50
+python train.py --dataset coco --coco_path "..\Miccai 2022 BUV Dataset" --depth 50
 ```
 
-For training using a custom dataset, with annotations in CSV format (see below), use
-
-```
-python train.py --dataset csv --csv_train <path/to/train_annots.csv>  --csv_classes <path/to/train/class_list.csv>  --csv_val <path/to/val_annots.csv>
-```
+## Trained Model
+[GoogleDrive](https://drive.google.com/drive/folders/1LtIv-s3jb2hLbtnSJ7GOwkjHPZUGVGVw?usp=sharing)
 
 ## Validation
 
 Run `coco_validation.py` to validate the code on the COCO dataset. With the above model, run:
 
-`python coco_validation.py --coco_path ~/path/to/coco --model_path /path/to/model/coco_resnet_50_map_0_335_state_dict.pt`
+`python coco_validation.py --coco_path ~/path/to/Miccai 2022 BUV Dataset --model_path /path/to/model/baseline_retinanet_resnet50_buv_weights.pt`
 
 
 This produces the following results:
 
 ```
- Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.335
- Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.499
- Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.357
- Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.167
- Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.369
- Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.466
- Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.282
- Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.429
- Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.458
- Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.255
- Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.508
- Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.597
-```
-
-For CSV Datasets (more info on those below), run the following script to validate:
-
-`python csv_validation.py --csv_annotations_path path/to/annotations.csv --model_path path/to/model.pt --images_path path/to/images_dir --class_list_path path/to/class_list.csv   (optional) iou_threshold iou_thres (0<iou_thresh<1) `
-
-It produces following resullts:
-
-```
-label_1 : (label_1_mAP)
-Precision :  ...
-Recall:  ...
-
-label_2 : (label_2_mAP)
-Precision :  ...
-Recall:  ...
-```
-
-You can also configure csv_eval.py script to save the precision-recall curve on disk.
-
-
-
-## Visualization
-
-To visualize the network detection, use `visualize.py`:
-
-```
-python visualize.py --dataset coco --coco_path ../coco --model <path/to/model.pt>
-```
-This will visualize bounding boxes on the validation set. To visualise with a CSV dataset, use:
-
-```
-python visualize.py --dataset csv --csv_classes <path/to/train/class_list.csv>  --csv_val <path/to/val_annots.csv> --model <path/to/model.pt>
-```
-
-## Model
-The retinanet model uses a resnet backbone. You can set the depth of the resnet model using the --depth argument. Depth must be one of 18, 34, 50, 101 or 152. Note that deeper models are more accurate but are slower and use more memory.
-
-## CSV datasets
-The `CSVGenerator` provides an easy way to define your own datasets.
-It uses two CSV files: one file containing annotations and one file containing a class name to ID mapping.
-
-### Annotations format
-The CSV file with annotations should contain one annotation per line.
-Images with multiple bounding boxes should use one row per bounding box.
-Note that indexing for pixel values starts at 0.
-The expected format of each line is:
-```
-path/to/image.jpg,x1,y1,x2,y2,class_name
-```
-
-Some images may not contain any labeled objects.
-To add these images to the dataset as negative examples,
-add an annotation where `x1`, `y1`, `x2`, `y2` and `class_name` are all empty:
-```
-path/to/image.jpg,,,,,
-```
-
-A full example:
-```
-/data/imgs/img_001.jpg,837,346,981,456,cow
-/data/imgs/img_002.jpg,215,312,279,391,cat
-/data/imgs/img_002.jpg,22,5,89,84,bird
-/data/imgs/img_003.jpg,,,,,
-```
-
-This defines a dataset with 3 images.
-`img_001.jpg` contains a cow.
-`img_002.jpg` contains a cat and a bird.
-`img_003.jpg` contains no interesting objects/animals.
-
-
-### Class mapping format
-The class name to ID mapping file should contain one mapping per line.
-Each line should use the following format:
-```
-class_name,id
-```
-
-Indexing for classes starts at 0.
-Do not include a background class as it is implicit.
-
-For example:
-```
-cow,0
-cat,1
-bird,2
+"AP@[IoU=0.50:0.95]": 0.30053981363216414,
+"AP@[IoU=0.50]": 0.5416903408144951,
+"AP@[IoU=0.75]": 0.3100322770448007,
+"AP@[small]": -1.0,
+"AP@[medium]": 0.043287723008057874,
+"AP@[large]": 0.30433887332036186,
+"AR@[max=1]": 0.5186767102648328,
+"AR@[max=10]": 0.5717005535497486,
+"AR@[max=100]": 0.5717005535497486,
+"AR@[small]": -1.0,
+"AR@[medium]": 0.4084507042253521,
+"AR@[large]": 0.5755061621868032
 ```
